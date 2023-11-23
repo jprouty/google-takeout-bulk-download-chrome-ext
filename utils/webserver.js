@@ -16,7 +16,7 @@ for (var entryName in config.entry) {
   if (excludeEntriesToHotReload.indexOf(entryName) === -1) {
     config.entry[entryName] = [
       'webpack/hot/dev-server',
-      `webpack-dev-server/client?hot=true&hostname=localhost&port=${env.PORT}`,
+      `webpack-dev-server/client?hot=true&hostname=127.0.0.1&port=${env.PORT}`,
     ].concat(config.entry[entryName]);
   }
 }
@@ -34,13 +34,13 @@ var server = new WebpackDevServer(
       webSocketTransport: 'sockjs',
     },
     webSocketServer: 'sockjs',
-    host: 'localhost',
+    host: '127.0.0.1',
     port: env.PORT,
     static: {
       directory: path.join(__dirname, '../build'),
     },
     devMiddleware: {
-      publicPath: `http://localhost:${env.PORT}/`,
+      publicPath: `http://127.0.0.1:${env.PORT}/`,
       writeToDisk: true,
     },
     headers: {

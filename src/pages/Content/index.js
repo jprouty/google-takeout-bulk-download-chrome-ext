@@ -1,6 +1,12 @@
-import { printLine } from './modules/print';
+import { printDownloads } from './modules/print';
 
-console.log('Content script works!');
-console.log('Must reload extension for modifications to take effect.');
+console.log('Content script loaded! 8');
 
-printLine("Using the 'printLine' function from the Print Module");
+printDownloads();
+
+if (module.hot) {
+    module.hot.accept('./modules/print.js', function () {
+        console.log('Accepting the updated printDownloads module!');
+        printDownloads();
+    })
+}
