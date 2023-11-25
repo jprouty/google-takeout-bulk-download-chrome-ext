@@ -5,6 +5,11 @@ let startDownload = async (request) => {
     console.log(request.downloads);
     await chrome.storage.local.set({ bulkDownloads: request.downloads });
 
+    chrome.downloads.onCreated.addListener(dlItem => {
+        console.log("downloads.onCreated");
+        console.log(dlItem);
+    });
+
     // chrome.downloads.download({ url: request.downloads[3].url }).then(downloadId => {
     //     console.log("Started download " + downloadId);
     // })
@@ -25,7 +30,11 @@ chrome.runtime.onMessage.addListener(
         if (request.action === "START_BULK_DL") {
             startDownload(request).then(response => sendResponse(response));
         } else if (request.action === "BULK_DL_STATUS") {
-            downloadStatus(request).then(response => sendResponse(response));
+            downloadStatus(request).then(response => {
+                console.log('status response: ');
+                console.log(response);
+                sendResponse(response);
+            });
         }
     }
 );
