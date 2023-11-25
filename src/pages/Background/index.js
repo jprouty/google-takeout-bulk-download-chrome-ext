@@ -1,5 +1,21 @@
 console.log('This is the background page.');
 
+let startDownload = async (request) => {
+    console.log('startDownload');
+    console.log(request.downloads);
+    await chrome.storage.local.set({ bulkDownloads: request.downloads });
+
+    // chrome.downloads.download({ url: request.downloads[3].url }).then(downloadId => {
+    //     console.log("Started download " + downloadId);
+    // })
+    return { success: true };
+}
+
+let downloadStatus = async (request) => {
+    console.log('downloadStatus');
+    let downloads = await chrome.storage.local.get('bulkDownloads');
+    return { isDownloading: !!downloads };
+}
 
 chrome.runtime.onMessage.addListener(
     (request, sender, sendResponse) => {
@@ -7,15 +23,12 @@ chrome.runtime.onMessage.addListener(
             "from a content script:" + sender.tab.url :
             "from the extension");
         if (request.action === "START_BULK_DL") {
-            console.log(request.downloadUrls);
-            // chrome.downloads.download({ url: request.downloadUrls[0] }).then(downloadId => {
-            //     console.log("Started download " + downloadId);
-            // })
-            sendResponse({ status: "ACK" });
+            startDownload(request).then(response => sendResponse(response));
+        } else if (request.action === "BULK_DL_STATUS") {
+            downloadStatus(request).then(response => sendResponse(response));
         }
     }
 );
-
 
 // chrome.downloads.search({}).then(downloads => {
 //     console.log('Printing Downloads ' + new Date());
