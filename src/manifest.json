@@ -19,9 +19,9 @@
   "content_scripts": [
     {
       "matches": [
-        "https://takeout.google.com/",
-        "https://takeout.google.com/settings/takeout/downloads",
-        "https://takeout.google.com/takeout/downloads"
+        "https://takeout.google.com/*",
+        "https://takeout.google.com/settings/takeout/downloads*",
+        "https://takeout.google.com/takeout/downloads*"
       ],
       "js": [
         "contentScript.bundle.js"
