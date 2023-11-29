@@ -30,6 +30,13 @@ let showStatusInDialog = async (dialogNode) => {
     let status = await chrome.runtime.sendMessage({ action: 'BULK_DL_STATUS' });
     console.log(status);
     if (!status) return false;
+    if (!status.isDownloading) return false;
+
+    // Start the next download if instructed to do so.
+    if (status.startNextDownloadUrl) {
+        location.href = status.startNextDownloadUrl;
+        return true;
+    }
 
     // First try to find the existing status node.
     let statusNode = document.getElementById('bulk-download-status');
@@ -50,6 +57,7 @@ let showStatusInDialog = async (dialogNode) => {
 
     // Update with the latest status.
     statusNode.textContent = '' + Math.round(Math.random() * 10000) / 100.0 + '%';
+    setTimeout(showStatusInDialog, 5000);
     return true;
 }
 
@@ -97,14 +105,13 @@ let decorateDialogWithBulkDownload = async (searchNode) => {
         button.disabled = true;
         chrome.runtime.sendMessage({ action: 'START_BULK_DL', downloads }).then(response => {
             console.log(response);
-
-            const status = document.createElement('span');
-            status.textContent = 'Starting first download...';
-
-            button.parentNode.insertBefore(status, button.nextSibling);
-
-            // Start the first download, which will likely require user auth. Afterwards, the service worker will take over, assuming it can keep the session live.
-            location.href = downloads[1].url;
+            if (response.startNextDownloadUrl) {
+                // Start the first download, which will likely require user auth. Afterwards, the service worker will take over, assuming it can keep the session live.
+                location.href = response.startNextDownloadUrl;
+            } else {
+                button.remove();
+                showStatusInDialog(dialogNode);
+            }
         });
     });
     dialogTextNode.parentNode.insertBefore(button, dialogTextNode.nextSibling);
