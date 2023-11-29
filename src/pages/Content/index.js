@@ -1,7 +1,5 @@
 import { printDownloads } from './modules/print';
 
-console.log('Content script loaded! 9');
-
 const downloadPartRe = new RegExp(/Part (?<part>[\d]+) of (?<parts>[\d]+) \((?<size>[\d\.]+) (?<size_unit>[KMGT]?B)\)/g);
 
 let sizeAsBytes = (size, unit) => {
@@ -28,12 +26,12 @@ let sizeAsBytes = (size, unit) => {
 
 let showStatusInDialog = async (dialogNode) => {
     let status = await chrome.runtime.sendMessage({ action: 'BULK_DL_STATUS' });
-    console.log(status);
     if (!status) return false;
     if (!status.isDownloading) return false;
 
     // Start the next download if instructed to do so.
     if (status.startNextDownloadUrl) {
+        console.log("Starting next part download");
         location.href = status.startNextDownloadUrl;
         return true;
     }
@@ -43,7 +41,7 @@ let showStatusInDialog = async (dialogNode) => {
 
     // Otherwise, create one.
     if (!statusNode) {
-        statusNode = document.createElement('span');
+        statusNode = document.createElement('div');
         statusNode.id = 'bulk-download-status';
 
         let dialogTextSearch = document.evaluate(".//div[contains(text(), \"Since this export is too big for a single file\")]", dialogNode, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
@@ -56,8 +54,8 @@ let showStatusInDialog = async (dialogNode) => {
     }
 
     // Update with the latest status.
-    statusNode.textContent = '' + Math.round(Math.random() * 10000) / 100.0 + '%';
-    setTimeout(showStatusInDialog, 5000);
+    statusNode.innerHTML = status.statusString;
+    setTimeout(showStatusInDialog, 1000);
     return true;
 }
 
@@ -66,7 +64,6 @@ let decorateDialogWithBulkDownload = async (searchNode) => {
     let dialogNode = dialogSearch.singleNodeValue;
     if (!dialogNode) return;
 
-    console.log("New dialog found", dialogNode);
     const isDownloading = await showStatusInDialog(dialogNode);
     if (isDownloading) return;
 
@@ -74,8 +71,6 @@ let decorateDialogWithBulkDownload = async (searchNode) => {
     let tableRowNode = tableRowsSearch.iterateNext();
     let downloads = []
     while (tableRowNode) {
-        // console.log(tableRowNode);
-
         let downloadLinksSearch = document.evaluate(".//a[@aria-label=\"Download\"]", tableRowNode, null, XPathResult.ORDERED_NODE_ITERATOR_TYPE, null);
         let firstDownloadLinkNode = downloadLinksSearch.iterateNext();
         if (!firstDownloadLinkNode) break;
@@ -91,11 +86,9 @@ let decorateDialogWithBulkDownload = async (searchNode) => {
         }
         tableRowNode = tableRowsSearch.iterateNext();
     }
-    // console.log(downloads);
 
     // Add bulk download button.
     let dialogTextSearch = document.evaluate(".//div[contains(text(), \"Since this export is too big for a single file\")]", dialogNode, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
-    // console.log(dialogTextSearch.singleNodeValue);
     if (!dialogTextSearch.singleNodeValue) return;
     const dialogTextNode = dialogTextSearch.singleNodeValue;
 
@@ -104,7 +97,6 @@ let decorateDialogWithBulkDownload = async (searchNode) => {
     button.addEventListener('click', (event) => {
         button.disabled = true;
         chrome.runtime.sendMessage({ action: 'START_BULK_DL', downloads }).then(response => {
-            console.log(response);
             if (response.startNextDownloadUrl) {
                 // Start the first download, which will likely require user auth. Afterwards, the service worker will take over, assuming it can keep the session live.
                 location.href = response.startNextDownloadUrl;
