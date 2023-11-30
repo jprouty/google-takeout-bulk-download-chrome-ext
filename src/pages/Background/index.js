@@ -3,6 +3,10 @@ console.log('This is the background page.');
 const takeoutFinalUrlRe = new RegExp(/googleusercontent\.com\/download\/storage\/v1\/b\/dataliberation\/o\/(?<timestamp>\d{8}T\d{6})\.\d{3}Z/g);
 const takeoutFilenameRe = new RegExp(/takeout-(?<timestamp>\d{8}T\d{6}Z)-(?<part>\d{3})\.(?<ext>zip|tgz)/g);
 
+// BUG: Filename of drive files that exceed the download part size selection will come raw dawg, like an mp4.
+// Must match ahead of time at download creation time, based on the takeoutFinalUrlRe.
+
+// Look for the newly initiated download and grab the timestamp prefix.
 let onDlCreated = async dlItem => {
     console.log("downloads.onCreated", dlItem);
     for (const match of dlItem.finalUrl.matchAll(takeoutFinalUrlRe)) {
@@ -70,7 +74,6 @@ chrome.downloads.onChanged.addListener(onDlChanged);
 
 let startDownload = async (request) => {
     console.log('startDownload');
-    console.log(request.downloads);
     await chrome.storage.local.set({
         isDownloading: true,
         parts: request.downloads,
@@ -78,9 +81,6 @@ let startDownload = async (request) => {
         downloadIdToPartIdx: {},
     });
 
-    // Next:
-    // 1) (Maybe) Go through existing downloads to see progress
-    // 2) Determine next download. Send back via startNextDownloadUrl
     return {
         success: true,
         startNextDownloadUrl: request.downloads[0].url,
@@ -220,10 +220,3 @@ chrome.runtime.onMessage.addListener(
         return false;
     }
 );
-
-// chrome.downloads.search({}).then(downloads => {
-//     console.log('Printing Downloads ' + new Date());
-//     downloads.forEach(function (item, i) {
-//         console.log(item);
-//     });
-// });
