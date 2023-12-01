@@ -1,7 +1,7 @@
 console.log('This is the background page.');
 
 const takeoutFinalUrlRe = new RegExp(/googleusercontent\.com\/download\/storage\/v1\/b\/dataliberation\/o\/(?<timestamp>\d{8}T\d{6})\.\d{3}Z/g);
-const takeoutFilenameRe = new RegExp(/takeout-(?<timestamp>\d{8}T\d{6}Z)-(?<part>\d{3})\.(?<ext>zip|tgz)/g);
+const takeoutFilenameRe = new RegExp(/-(?<part>\d{3})\./g);
 
 // BUG: Filename of drive files that exceed the download part size selection will come raw dawg, like an mp4.
 // Must match ahead of time at download creation time, based on the takeoutFinalUrlRe.
@@ -10,61 +10,68 @@ const takeoutFilenameRe = new RegExp(/takeout-(?<timestamp>\d{8}T\d{6}Z)-(?<part
 let onDlCreated = async dlItem => {
     console.log("downloads.onCreated", dlItem);
     for (const match of dlItem.finalUrl.matchAll(takeoutFinalUrlRe)) {
-        console.log("We have a takeout download!");
+        console.log("New takeout download detected");
         console.log(`Timestamp: ${match.groups.timestamp}`);
         let downloads = await chrome.storage.local.get();
+
         if (!downloads.batchTimestamp) {
             downloads.batchTimestamp = match.groups.timestamp;
-
-            // TODO: See if there are additional completed downloads via chrome.downloads.search!
+            downloads.downloadIdToPartIdx = {};
+        } else {
+            if (downloads.batchTimestamp !== match.groups.timestamp) {
+                console.warn(`Takeout download started but from different export with batch timestamp: ${match.groups.timestamp}`);
+                return;
+            }
         }
+        // Insert a null placeholder, indicating that a download has started but the filename is not yet determined and therefore the part # is unknown at this point.
+        downloads.downloadIdToPartIdx[dlItem.id] = null;
+        await chrome.storage.local.set(downloads);
     }
 };
 
 let onDlChanged = async delta => {
     console.log('onChanged', delta);
+    let downloads = await chrome.storage.local.get();
+    // Only pay attention to downloads that are part of this batch, as determined via onDlCreated.
+    if (!(delta.id in downloads.downloadIdToPartIdx)) return;
 
-    // Look for a filename delta, which happens once the download starts.
+    // Filename delta, which happens once the download starts:
     if (delta.filename) {
         for (const match of delta.filename.current.matchAll(takeoutFilenameRe)) {
-            console.log("We have a takeout download!");
-            console.log(`Timestamp: ${match.groups.timestamp} Part: ${match.groups.part} Ext: ${match.groups.ext}`);
-
-            let downloads = await chrome.storage.local.get();
-            // Save off the prefix so we can match up with others from the same batch.
-            if (!downloads.batchTimestamp) {
-                downloads.batchTimestamp = match.groups.timestamp;
-
-                // TODO: See if there are additional completed downloads via chrome.downloads.search!
-            }
-
+            console.log(`Part ${match.groups.part} started`);
             // Associate the download id with the part.
             const partIdx = match.groups.part - 1;
             downloads.parts[partIdx].downloadId = delta.id;
             downloads.parts[partIdx].state = "in_progress";
             downloads.isDownloading = true;
             downloads.downloadIdToPartIdx[delta.id] = partIdx;
-            await chrome.storage.local.set(downloads);
-
-            return;
+            // Pause all downloads once filenames/parts are established.
+            await chrome.downloads.pause(delta.id);
+            break;
         }
     }
 
-    // Look for downloads that are finishing.
-    if (delta.state && delta.state.current === "complete") {
-        let downloads = await chrome.storage.local.get();
-        // Remove the completed download form the active set of downloads.
-        if (downloads.downloadIdToPartIdx[delta.id]) {
-            const partIdx = downloads.downloadIdToPartIdx[delta.id];
+    // Sometimes the download is a duplicate/doesn't match the filename filter. Drop out here if that's the case. 
+    if (!downloads.downloadIdToPartIdx[delta.id]) return;
+
+    const partIdx = downloads.downloadIdToPartIdx[delta.id];
+    // State delta: Look for downloads that are finishing.
+    if (delta.state) {
+        // Regardless of what the state is, update the state on the part.
+        downloads.parts[partIdx].state = delta.state.current;
+        if (delta.state.current === "complete") {
             console.log(`Part ${partIdx + 1} complete.`)
+            // Remove the completed download form the active set of downloads.
             delete downloads.downloadIdToPartIdx[delta.id];
-            downloads.parts[partIdx].state = "complete";
-
-            console.log(downloads);
-            await chrome.storage.local.set(downloads);
         }
     }
 
+    if (delta.error) downloads.parts[partIdx].error = delta.error.current;
+    if (delta.canResume) downloads.parts[partIdx].canResume = delta.canResume.current;
+    if (delta.paused) downloads.parts[partIdx].paused = delta.paused.current;
+
+    // TRY TO PAUSE IT!
+    await chrome.storage.local.set(downloads);
     // TODO: Look for other failure states.
 };
 
@@ -83,7 +90,7 @@ let startDownload = async (request) => {
 
     return {
         success: true,
-        startNextDownloadUrl: request.downloads[0].url,
+        startNextDownloadUrl: request.downloads[10].url,
     };
 }
 
