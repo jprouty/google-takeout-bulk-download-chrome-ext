@@ -1,5 +1,3 @@
-console.log('This is the background page.');
-
 const takeoutFinalUrlRe = new RegExp(/googleusercontent\.com\/download\/storage\/v1\/b\/dataliberation\/o\/(?<timestamp>\d{8}T\d{6})\.\d{3}Z/g);
 const takeoutFilenameRe = new RegExp(/-(?<part>\d{3})\./g);
 
@@ -8,13 +6,12 @@ const takeoutFilenameRe = new RegExp(/-(?<part>\d{3})\./g);
 
 // Look for the newly initiated download and grab the timestamp prefix.
 let onDlCreated = async dlItem => {
-    console.log("downloads.onCreated", dlItem);
+    // console.log("downloads.onCreated", dlItem);
     for (const match of dlItem.finalUrl.matchAll(takeoutFinalUrlRe)) {
-        console.log("New takeout download detected");
-        console.log(`Timestamp: ${match.groups.timestamp}`);
         let downloads = await chrome.storage.local.get();
 
         if (!downloads.batchTimestamp) {
+            console.log(`New takeout batch timestamp: ${match.groups.timestamp}`);
             downloads.batchTimestamp = match.groups.timestamp;
             downloads.downloadIdToPartIdx = {};
         } else {
@@ -30,7 +27,7 @@ let onDlCreated = async dlItem => {
 };
 
 let onDlChanged = async delta => {
-    console.log('onChanged', delta);
+    // console.log('onChanged', delta);
     let downloads = await chrome.storage.local.get();
     // Only pay attention to downloads that are part of this batch, as determined via onDlCreated.
     if (!(delta.id in downloads.downloadIdToPartIdx)) return;
@@ -45,14 +42,14 @@ let onDlChanged = async delta => {
             downloads.parts[partIdx].state = "in_progress";
             downloads.isDownloading = true;
             downloads.downloadIdToPartIdx[delta.id] = partIdx;
-            // Pause all downloads once filenames/parts are established.
-            await chrome.downloads.pause(delta.id);
+            // Download is established - eliminate the cool down.
+            downloads.coolDown = 0;
             break;
         }
     }
 
-    // Sometimes the download is a duplicate/doesn't match the filename filter. Drop out here if that's the case. 
-    if (!downloads.downloadIdToPartIdx[delta.id]) return;
+    // Sometimes the download is a duplicate/doesn't match the filename filter. Drop out here if that's the case.
+    if (downloads.downloadIdToPartIdx[delta.id] === null) return;
 
     const partIdx = downloads.downloadIdToPartIdx[delta.id];
     // State delta: Look for downloads that are finishing.
@@ -70,8 +67,7 @@ let onDlChanged = async delta => {
     if (delta.canResume) downloads.parts[partIdx].canResume = delta.canResume.current;
     if (delta.paused) downloads.parts[partIdx].paused = delta.paused.current;
 
-    // TRY TO PAUSE IT!
-    await chrome.storage.local.set(downloads);
+    return await chrome.storage.local.set(downloads);
     // TODO: Look for other failure states.
 };
 
@@ -80,24 +76,23 @@ chrome.downloads.onCreated.addListener(onDlCreated);
 chrome.downloads.onChanged.addListener(onDlChanged);
 
 let startDownload = async (request) => {
-    console.log('startDownload');
+    // console.log('startDownload');
     await chrome.storage.local.set({
         isDownloading: true,
         parts: request.downloads,
-        coolDown: 10,
+        coolDown: 60,
         downloadIdToPartIdx: {},
     });
 
     return {
         success: true,
-        startNextDownloadUrl: request.downloads[10].url,
+        startNextDownloadUrl: request.downloads[0].url,
     };
 }
 
 let downloadStatus = async (request) => {
     let downloads = await chrome.storage.local.get();
     if (!downloads.parts) return { isDownloading: false };
-    return { isDownloading: false };
 
     await updateDownloadProgress(downloads);
 
@@ -116,7 +111,7 @@ let downloadStatus = async (request) => {
         isDownloading: !!downloads.isDownloading,
         startNextDownloadUrl: downloads.coolDown-- > 0 ? null : await getNextDownloadUrl(downloads.parts),
     };
-    if (statusData.startNextDownloadUrl) downloads.coolDown = 10;
+    if (statusData.startNextDownloadUrl) downloads.coolDown = 60;
     await chrome.storage.local.set(downloads);
     return statusData;
 }
@@ -177,29 +172,33 @@ let updateDownloadProgress = async downloads => {
     return numUpdated !== 0;
 }
 
-const MAX_CONCURRENT_DOWNLOADS = 2;
+// Chrome has a max of 10 concurrent connections (personally verified to be the case on win11 and macOS 14).
+// Max out at 9, leaving one connection left.
+// https://bluetriangle.com/blog/blocking-web-performance-villain#:~:text=Chrome%20has%20a%20limit%20of,host%20at%20the%20same%20time.
+const MAX_CONCURRENT_DOWNLOADS = 9;
 
 let getNextDownloadUrl = async parts => {
     const inProgressDownloads = parts.filter(e => e.state === "in_progress");
     const numInProgress = inProgressDownloads.length;
 
     if (numInProgress >= MAX_CONCURRENT_DOWNLOADS) return null;
-    if (numInProgress === 0) return getNextPartUrl(parts);
-
-    // Both for in_progress only:
-    const totalDownloadSize = inProgressDownloads.map(e => e.size).reduce((a, b) => a + b);
-    const totalDownloadedSize = inProgressDownloads.map(e => e.bytesReceived).reduce((a, b) => a + b);
-
-    // Don't saturate MAX_CONCURRENT_DOWNLOADS right away. Instead, attempt to stagger the downloads such that they are starting/ending as evenly as possible, assuming this will help to stay authed.
-    const partLoad = numInProgress / MAX_CONCURRENT_DOWNLOADS;
-
-    if (totalDownloadedSize / totalDownloadSize < partLoad) return null;
     return getNextPartUrl(parts);
+    // if (numInProgress === 0) return getNextPartUrl(parts);
+
+    // // Both for in_progress only:
+    // const totalDownloadSize = inProgressDownloads.map(e => e.size).reduce((a, b) => a + b);
+    // const totalDownloadedSize = inProgressDownloads.map(e => e.bytesReceived).reduce((a, b) => a + b);
+
+    // // Don't saturate MAX_CONCURRENT_DOWNLOADS right away. Instead, attempt to stagger the downloads such that they are starting/ending as evenly as possible, assuming this will help to stay authed.
+    // const partLoad = numInProgress / MAX_CONCURRENT_DOWNLOADS;
+
+    // if (totalDownloadedSize / totalDownloadSize < partLoad) return null;
+    // return getNextPartUrl(parts);
 };
 
 let getNextPartUrl = parts => {
     const nextPart = parts.find(part => !part.downloadId);
-    console.log(`Next part to download: ${nextPart.part}/${nextPart.parts}`);
+    console.log(`Selecting part ${nextPart.part} for next fetch (${nextPart.parts} parts total)`);
     if (!nextPart) return null;
     return nextPart.url;
 }
@@ -213,9 +212,6 @@ let getDownloadedSize = part => {
 // Return true to indicate an asynchronous response.
 chrome.runtime.onMessage.addListener(
     (request, sender, sendResponse) => {
-        console.log(sender.tab ?
-            "from a content script:" + sender.tab.url :
-            "from the extension");
         if (request.action === "START_BULK_DL") {
             startDownload(request).then(sendResponse);
             return true;
